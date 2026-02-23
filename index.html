@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Classificador Mar vs Muntanya (V2)</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+  <style>
+    body{
+      font-family: Arial, sans-serif;
+      padding: 24px;
+      margin: 0;
+      transition: background-color 0.3s ease;
+      background: #ffffff;
+    }
+
+    header{
+      display:flex;
+      justify-content: space-between;
+      align-items:center;
+      gap: 12px;
+      max-width: 920px;
+      margin: 0 auto 16px;
+    }
+
+    .tag{
+      font-weight: 700;
+      border: 1px solid #ddd;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #fafafa;
+    }
+
+    .wrap{
+      max-width: 920px;
+      margin: 0 auto;
+      border: 1px solid #e5e5e5;
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+      background: white;
+    }
+
+    h1{ margin: 0; font-size: 26px; }
+    .muted{ opacity: .75; font-size: 14px; margin-top: 4px; }
+
+    #status{ margin: 10px 0; font-weight: 700; }
+
+    .row{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    input[type="file"]{ padding: 6px; }
+
+    button{
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 10px;
+      border: 1px solid #ddd;
+      background: #f7f7f7;
+      font-weight: 700;
+    }
+    button:disabled{ opacity: .5; cursor: not-allowed; }
+
+    #preview{ margin-top: 12px; }
+    #preview img{
+      max-width: 420px;
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      border: 1px solid #e5e5e5;
+    }
+
+    #mainResult{
+      font-size: 40px;
+      font-weight: 900;
+      margin: 16px 0 8px;
+    }
+
+    .badge{
+      display:inline-block;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid #ddd;
+      background: #fafafa;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+
+    .bars{ margin-top: 12px; }
+    .bar-container{ margin: 10px 0; }
+
+    .bar-label{ font-size: 14px; display:flex; justify-content: space-between; }
+    .bar{ height: 16px; background:#eee; border-radius: 999px; overflow:hidden; margin-top: 6px; }
+    .bar-fill{ height: 100%; width: 0%; border-radius: 999px; transition: width .25s ease; }
+
+    /* colors per classe */
+    .fill-mar{ background:#2b7cff; }
+    .fill-muntanya{ background:#2fa84f; }
+    .fill-other{ background:#666; }
+
+    #history{ margin-top: 16px; font-size: 14px; }
+    #history ul{ margin: 8px 0 0; padding-left: 18px; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>Classificador: Mar vs Muntanya</h1>
+      <div class="muted">V2 millorada: llindar de confiança, barres i historial.</div>
+    </div>
+    <div class="tag">VERSIÓ V2</div>
+  </header>
+
+  <div class="wrap">
+    <div id="status">Carregant model...</div>
+
+    <div class="row">
+      <input type="file" id="imageUpload" accept="image/*" />
+      <button id="btnPredict" onclick="predictImage()" disabled>Classificar</button>
+    </div>
+
+    <div id="preview"></div>
+
+    <div id="mainResult"></div>
+
+    <div class="bars" id="result"></div>
+
+    <div id="history">
+      <b>Historial (últimes 5):</b>
+      <ul id="historyList"></ul>
+    </div>
+  </div>
+
+<script>
+  const MODEL_URL = "./model/";
+  const CONFIDENCE_THRESHOLD = 0.80;
+
+  let model = null;
+  let history = [];
+
+  window.onload = init;
+
+  async function init() {
+    const statusEl = document.getElementById("status");
+    try {
+      statusEl.textContent = "Carregant model...";
+      model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+      statusEl.textContent = "Preparat. Selecciona una imatge i prem Classificar.";
+      document.getElementById("btnPredict").disabled = false;
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Error carregant model (mira F12).";
+    }
+  }
+
+  async function predictImage() {
+    const input = document.getElementById("imageUpload");
+    const statusEl = document.getElementById("status");
+    const previewEl = document.getElementById("preview");
+    const resultEl = document.getElementById("result");
+    const mainResultEl = document.getElementById("mainResult");
+    const btn = document.getElementById("btnPredict");
+
+    resultEl.innerHTML = "";
+    mainResultEl.innerHTML = "";
+
+    if (!input.files || input.files.length === 0) {
+      statusEl.textContent = "Selecciona una imatge primer.";
+      return;
+    }
+
+    const file = input.files[0];
+    if (!file.type.startsWith("image/")) {
+      statusEl.textContent = "El fitxer no és una imatge vàlida.";
+      return;
+    }
+
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+
+    img.onload = async () => {
+      previewEl.innerHTML = "";
+      previewEl.appendChild(img);
+
+      statusEl.textContent = "Classificant...";
+      btn.disabled = true;
+
+      try {
+        const prediction = await model.predict(img);
+        prediction.sort((a, b) => b.probability - a.probability);
+
+        const best = prediction[0];
+        const bestPct = best.probability;
+
+        // resultat principal + fons
+        if (bestPct < CONFIDENCE_THRESHOLD) {
+          mainResultEl.innerHTML = `NO ESTIC SEGUR <span class="badge">${(bestPct*100).toFixed(1)}%</span>`;
+          document.body.style.backgroundColor = "#f6f6f6";
+          addToHistory("No estic segur", bestPct);
+        } else {
+          mainResultEl.innerHTML = `${best.className.toUpperCase()} <span class="badge">${(bestPct*100).toFixed(1)}%</span>`;
+
+          if (best.className.toLowerCase().includes("mar")) {
+            document.body.style.backgroundColor = "#eaf3ff";
+          } else if (best.className.toLowerCase().includes("munt")) {
+            document.body.style.backgroundColor = "#ecffef";
+          } else {
+            document.body.style.backgroundColor = "#ffffff";
+          }
+
+          addToHistory(best.className, bestPct);
+        }
+
+        // barres
+        for (const p of prediction) {
+          const percent = (p.probability * 100).toFixed(1);
+
+          let fillClass = "fill-other";
+          const cn = p.className.toLowerCase();
+          if (cn.includes("mar")) fillClass = "fill-mar";
+          else if (cn.includes("munt")) fillClass = "fill-muntanya";
+
+          resultEl.innerHTML += `
+            <div class="bar-container">
+              <div class="bar-label">
+                <span>${p.className}</span>
+                <span>${percent}%</span>
+              </div>
+              <div class="bar">
+                <div class="bar-fill ${fillClass}" style="width:${percent}%"></div>
+              </div>
+            </div>
+          `;
+        }
+
+        statusEl.textContent = "Fet.";
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error classificant.";
+      } finally {
+        btn.disabled = false;
+        URL.revokeObjectURL(img.src);
+      }
+    };
+
+    img.onerror = () => {
+      statusEl.textContent = "No s'ha pogut carregar la imatge.";
+    };
+  }
+
+  function addToHistory(label, probability) {
+    const historyList = document.getElementById("historyList");
+    const percent = (probability * 100).toFixed(1);
+    const time = new Date().toLocaleTimeString();
+
+    history.unshift(`${time} — ${label} (${percent}%)`);
+    if (history.length > 5) history.pop();
+
+    historyList.innerHTML = "";
+    history.forEach(item => {
+      const li = document.createElement("li");
+      li.textContent = item;
+      historyList.appendChild(li);
+    });
+  }
+</script>
+
+</body>
+</html>
